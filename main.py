@@ -20,14 +20,13 @@ async def predict_phishing(request: URLRequest):
     if not raw_input:
         raise HTTPException(status_code=400, detail="URL cannot be empty")
     
-    # Ensure scheme is present before parsing
     url = normalize_url(raw_input)
 
     try:
         ext = tldextract.extract(url)
         registered_domain = f"{ext.domain}.{ext.suffix}".lower() if ext.suffix else ext.domain.lower()
 
-        # Rule 1: Exact match for verified legitimate domains
+        # Rule 1: Exact match for verified whitelist domains
         if registered_domain in EXACT_LEGITIMATE_DOMAINS and ext.suffix and not ext.subdomain:
             return {
                 "url": url,
@@ -75,7 +74,7 @@ async def predict_phishing(request: URLRequest):
                 }
             }
 
-        # Rule 4: Machine Learning Model Extraction & Prediction (Async Offload)
+        # Rule 4: Machine Learning Model Extraction & Prediction
         df_features = await run_in_threadpool(extract_features, url)
         pred = model.predict(df_features)[0]
         prob = model.predict_proba(df_features)[0]
@@ -101,7 +100,6 @@ async def predict_phishing(request: URLRequest):
     except Exception as e:
         print(f"[API Fallback] Triggered for {url}: {str(e)}")
         
-        # Absolute safety net: Return heuristic classification instead of 500 error
         is_https = url.startswith("https://")
         has_at_symbol = "@" in url
         has_suspicious_symbols = url.count('-') >= 3 or url.count('.') >= 4

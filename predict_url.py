@@ -23,7 +23,7 @@ EXACT_LEGITIMATE_DOMAINS = {
 
 def normalize_url(url):
     """Ensures input always has a scheme for safe parsing."""
-    url = url.strip()
+    url = str(url).strip()
     if not url.startswith(('http://', 'https://')):
         url = 'https://' + url
     return url
@@ -49,32 +49,32 @@ def get_live_domain_info(raw_domain):
         'domain_spf': 1
     }
 
-    # Global hard timeout for sockets
-    socket.setdefaulttimeout(0.5)
+    # Set tight socket timeout
+    socket.setdefaulttimeout(1.0)
 
-    # 1. Non-blocking DNS Check
+    # 1. Non-blocking DNS Check (Catches all DNS exceptions)
     try:
         import dns.resolver
         resolver = dns.resolver.Resolver()
-        resolver.lifetime = 0.5
-        resolver.timeout = 0.5
+        resolver.lifetime = 1.0
+        resolver.timeout = 1.0
 
         try:
             a_answers = resolver.resolve(raw_domain, 'A')
             data['qty_ip_resolved'] = len(a_answers)
             data['ttl_hostname'] = getattr(a_answers, 'ttl', 300)
-        except BaseException:
+        except Exception:
             data['qty_ip_resolved'] = 0
 
         try:
             mx_answers = resolver.resolve(clean_domain, 'MX')
             data['qty_mx_servers'] = len(mx_answers)
-        except BaseException:
+        except Exception:
             data['qty_mx_servers'] = 0
-    except BaseException:
+    except Exception:
         pass
 
-    # 2. Crash-Proof WHOIS Check
+    # 2. Non-blocking WHOIS Check (Catches PywhoisError, UnknownTld, & socket errors)
     try:
         import whois
         w = whois.whois(clean_domain)
@@ -97,125 +97,134 @@ def get_live_domain_info(raw_domain):
             ns = getattr(w, 'name_servers', None)
             if ns:
                 data['qty_nameservers'] = len(ns) if isinstance(ns, list) else 1
-    except BaseException:
+    except Exception:
+        # Quietly fall back to default dict on lookup failure
         pass
 
     return data
 
 def extract_features(url):
     url = normalize_url(url)
-    ext = tldextract.extract(url)
-    registered_domain = f"{ext.domain}.{ext.suffix}".lower() if ext.suffix else ext.domain.lower()
     
-    parsed = urlparse(url)
-    netloc = parsed.netloc or parsed.path.split('/')[0]
-    domain = netloc.split(':')[0].lower()
-    path = parsed.path if parsed.netloc else ''
-    params = parsed.query
-
-    feats = {}
-    
-    # Base URL counts
-    feats['qty_dot_url'] = url.count('.')
-    feats['qty_hyphen_url'] = url.count('-')
-    feats['qty_underline_url'] = url.count('_')
-    feats['qty_slash_url'] = url.count('/')
-    feats['qty_questionmark_url'] = url.count('?')
-    feats['qty_equal_url'] = url.count('=')
-    feats['qty_at_url'] = url.count('@')
-    feats['qty_and_url'] = url.count('&')
-    feats['qty_exclamation_url'] = url.count('!')
-    feats['qty_space_url'] = url.count(' ')
-    feats['qty_tilde_url'] = url.count('~')
-    feats['qty_comma_url'] = url.count(',')
-    feats['qty_plus_url'] = url.count('+')
-    feats['qty_asterisk_url'] = url.count('*')
-    feats['qty_hashtag_url'] = url.count('#')
-    feats['qty_dollar_url'] = url.count('$')
-    feats['qty_percent_url'] = url.count('%')
-    feats['qty_tld_url'] = len(domain.split('.')) - 1 if '.' in domain else 0
-    feats['length_url'] = len(url)
-
-    # Domain Counts
-    feats['qty_dot_domain'] = domain.count('.')
-    feats['qty_hyphen_domain'] = domain.count('-')
-    feats['qty_underline_domain'] = domain.count('_')
-    feats['qty_slash_domain'] = domain.count('/')
-    feats['qty_questionmark_domain'] = domain.count('?')
-    feats['qty_equal_domain'] = domain.count('=')
-    feats['qty_at_domain'] = domain.count('@')
-    feats['qty_and_domain'] = domain.count('&')
-    feats['qty_exclamation_domain'] = domain.count('!')
-    feats['qty_space_domain'] = domain.count(' ')
-    feats['qty_tilde_domain'] = domain.count('~')
-    feats['qty_comma_domain'] = domain.count(',')
-    feats['qty_plus_domain'] = domain.count('+')
-    feats['qty_asterisk_domain'] = domain.count('*')
-    feats['qty_hashtag_domain'] = domain.count('#')
-    feats['qty_dollar_domain'] = domain.count('$')
-    feats['qty_percent_domain'] = domain.count('%')
-    feats['qty_vowels_domain'] = len(re.findall(r'[aeiouAEIOU]', domain))
-    feats['domain_length'] = len(domain)
-    feats['domain_in_ip'] = 1 if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', domain) else 0
-    feats['server_client_domain'] = 1 if 'server' in domain or 'client' in domain else 0
-
-    # Directory Counts
-    feats['qty_dot_directory'] = path.count('.')
-    feats['qty_hyphen_directory'] = path.count('-')
-    feats['qty_underline_directory'] = path.count('_')
-    feats['qty_slash_directory'] = path.count('/')
-    feats['qty_questionmark_directory'] = path.count('?')
-    feats['qty_equal_directory'] = path.count('=')
-    feats['qty_at_directory'] = path.count('@')
-    feats['qty_and_directory'] = path.count('&')
-    feats['qty_exclamation_directory'] = path.count('!')
-    feats['qty_space_directory'] = path.count(' ')
-    feats['qty_tilde_directory'] = path.count('~')
-    feats['qty_comma_directory'] = path.count(',')
-    feats['qty_plus_directory'] = path.count('+')
-    feats['qty_asterisk_directory'] = path.count('*')
-    feats['qty_hashtag_directory'] = path.count('#')
-    feats['qty_dollar_directory'] = path.count('$')
-    feats['qty_percent_directory'] = path.count('%')
-    feats['directory_length'] = len(path)
-
-    # Params Counts
-    feats['qty_dot_params'] = params.count('.')
-    feats['qty_hyphen_params'] = params.count('-')
-    feats['qty_underline_params'] = params.count('_')
-    feats['qty_slash_params'] = params.count('/')
-    feats['qty_questionmark_params'] = params.count('?')
-    feats['qty_equal_params'] = params.count('=')
-    feats['qty_at_params'] = params.count('@')
-    feats['qty_and_params'] = params.count('&')
-    feats['qty_exclamation_params'] = params.count('!')
-    feats['qty_space_params'] = params.count(' ')
-    feats['qty_tilde_params'] = params.count('~')
-    feats['qty_comma_params'] = params.count(',')
-    feats['qty_plus_params'] = params.count('+')
-    feats['qty_asterisk_params'] = params.count('*')
-    feats['qty_hashtag_params'] = params.count('#')
-    feats['qty_dollar_params'] = params.count('$')
-    feats['qty_percent_params'] = params.count('%')
-    feats['params_length'] = len(params)
-    feats['qty_params'] = len(params.split('&')) if params else 0
-
-    # Safe network domain fetch
     try:
-        live_data = get_live_domain_info(domain)
-        feats.update(live_data)
-    except BaseException:
-        pass
+        ext = tldextract.extract(url)
+        registered_domain = f"{ext.domain}.{ext.suffix}".lower() if ext.suffix else ext.domain.lower()
+        
+        parsed = urlparse(url)
+        netloc = parsed.netloc or parsed.path.split('/')[0]
+        domain = netloc.split(':')[0].lower()
+        path = parsed.path if parsed.netloc else ''
+        params = parsed.query
 
-    feats['tls_ssl_certificate'] = 1 if url.startswith('https') else 0
-    feats['url_shortened'] = 1 if len(domain) < 10 and any(s in domain for s in ['bit.ly', 'goo.gl', 't.co', 'tinyurl']) else 0
-    feats['url_google_index'] = 1
-    feats['domain_google_index'] = 1
-    feats['asn_ip'] = 0
-    feats['email_in_url'] = 1 if re.search(r'[\w\.-]+@[\w\.-]+', url) else 0
+        feats = {}
+        
+        # Base URL counts
+        feats['qty_dot_url'] = url.count('.')
+        feats['qty_hyphen_url'] = url.count('-')
+        feats['qty_underline_url'] = url.count('_')
+        feats['qty_slash_url'] = url.count('/')
+        feats['qty_questionmark_url'] = url.count('?')
+        feats['qty_equal_url'] = url.count('=')
+        feats['qty_at_url'] = url.count('@')
+        feats['qty_and_url'] = url.count('&')
+        feats['qty_exclamation_url'] = url.count('!')
+        feats['qty_space_url'] = url.count(' ')
+        feats['qty_tilde_url'] = url.count('~')
+        feats['qty_comma_url'] = url.count(',')
+        feats['qty_plus_url'] = url.count('+')
+        feats['qty_asterisk_url'] = url.count('*')
+        feats['qty_hashtag_url'] = url.count('#')
+        feats['qty_dollar_url'] = url.count('$')
+        feats['qty_percent_url'] = url.count('%')
+        feats['qty_tld_url'] = len(domain.split('.')) - 1 if '.' in domain else 0
+        feats['length_url'] = len(url)
 
-    row = {f: feats.get(f, -1) for f in feature_names}
-    return pd.DataFrame([row])
+        # Domain Counts
+        feats['qty_dot_domain'] = domain.count('.')
+        feats['qty_hyphen_domain'] = domain.count('-')
+        feats['qty_underline_domain'] = domain.count('_')
+        feats['qty_slash_domain'] = domain.count('/')
+        feats['qty_questionmark_domain'] = domain.count('?')
+        feats['qty_equal_domain'] = domain.count('=')
+        feats['qty_at_domain'] = domain.count('@')
+        feats['qty_and_domain'] = domain.count('&')
+        feats['qty_exclamation_domain'] = domain.count('!')
+        feats['qty_space_domain'] = domain.count(' ')
+        feats['qty_tilde_domain'] = domain.count('~')
+        feats['qty_comma_domain'] = domain.count(',')
+        feats['qty_plus_domain'] = domain.count('+')
+        feats['qty_asterisk_domain'] = domain.count('*')
+        feats['qty_hashtag_domain'] = domain.count('#')
+        feats['qty_dollar_domain'] = domain.count('$')
+        feats['qty_percent_domain'] = domain.count('%')
+        feats['qty_vowels_domain'] = len(re.findall(r'[aeiouAEIOU]', domain))
+        feats['domain_length'] = len(domain)
+        feats['domain_in_ip'] = 1 if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', domain) else 0
+        feats['server_client_domain'] = 1 if 'server' in domain or 'client' in domain else 0
+
+        # Directory Counts
+        feats['qty_dot_directory'] = path.count('.')
+        feats['qty_hyphen_directory'] = path.count('-')
+        feats['qty_underline_directory'] = path.count('_')
+        feats['qty_slash_directory'] = path.count('/')
+        feats['qty_questionmark_directory'] = path.count('?')
+        feats['qty_equal_directory'] = path.count('=')
+        feats['qty_at_directory'] = path.count('@')
+        feats['qty_and_directory'] = path.count('&')
+        feats['qty_exclamation_directory'] = path.count('!')
+        feats['qty_space_directory'] = path.count(' ')
+        feats['qty_tilde_directory'] = path.count('~')
+        feats['qty_comma_directory'] = path.count(',')
+        feats['qty_plus_directory'] = path.count('+')
+        feats['qty_asterisk_directory'] = path.count('*')
+        feats['qty_hashtag_directory'] = path.count('#')
+        feats['qty_dollar_directory'] = path.count('$')
+        feats['qty_percent_directory'] = path.count('%')
+        feats['directory_length'] = len(path)
+
+        # Params Counts
+        feats['qty_dot_params'] = params.count('.')
+        feats['qty_hyphen_params'] = params.count('-')
+        feats['qty_underline_params'] = params.count('_')
+        feats['qty_slash_params'] = params.count('/')
+        feats['qty_questionmark_params'] = params.count('?')
+        feats['qty_equal_params'] = params.count('=')
+        feats['qty_at_params'] = params.count('@')
+        feats['qty_and_params'] = params.count('&')
+        feats['qty_exclamation_params'] = params.count('!')
+        feats['qty_space_params'] = params.count(' ')
+        feats['qty_tilde_params'] = params.count('~')
+        feats['qty_comma_params'] = params.count(',')
+        feats['qty_plus_params'] = params.count('+')
+        feats['qty_asterisk_params'] = params.count('*')
+        feats['qty_hashtag_params'] = params.count('#')
+        feats['qty_dollar_params'] = params.count('$')
+        feats['qty_percent_params'] = params.count('%')
+        feats['params_length'] = len(params)
+        feats['qty_params'] = len(params.split('&')) if params else 0
+
+        # Fetch live domain network info safely
+        try:
+            live_data = get_live_domain_info(domain)
+            feats.update(live_data)
+        except Exception:
+            pass
+
+        feats['tls_ssl_certificate'] = 1 if url.startswith('https') else 0
+        feats['url_shortened'] = 1 if len(domain) < 10 and any(s in domain for s in ['bit.ly', 'goo.gl', 't.co', 'tinyurl']) else 0
+        feats['url_google_index'] = 1
+        feats['domain_google_index'] = 1
+        feats['asn_ip'] = 0
+        feats['email_in_url'] = 1 if re.search(r'[\w\.-]+@[\w\.-]+', url) else 0
+
+        row = {f: feats.get(f, -1) for f in feature_names}
+        return pd.DataFrame([row])
+
+    except Exception:
+        # Safety fallback ensures dataframe creation never fails
+        row = {f: -1 for f in feature_names}
+        row['length_url'] = len(url)
+        return pd.DataFrame([row])
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:

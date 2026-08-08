@@ -30,9 +30,9 @@ def get_clean_domain(domain_str):
 def get_live_domain_info(raw_domain):
     clean_domain = get_clean_domain(raw_domain)
     
-    # Defaults prevent model penalties on lookup timeouts/failures
+    # Safe defaults prevent model penalties on lookup timeouts, blocks, or failures
     data = {
-        'time_domain_activation': 3650,  # 10 years default
+        'time_domain_activation': 3650,  # 10 years default fallback
         'time_domain_expiration': 365,
         'qty_nameservers': 2,
         'qty_mx_servers': 1,
@@ -41,7 +41,10 @@ def get_live_domain_info(raw_domain):
         'domain_spf': 1
     }
 
-    # 1. Fast DNS Check with strict exception handling (0.5s Timeout)
+    # Set hard timeout on socket operations globally for thread execution
+    socket.setdefaulttimeout(0.5)
+
+    # 1. Non-blocking DNS Check (0.5s Timeout)
     try:
         import dns.resolver
         resolver = dns.resolver.Resolver()
@@ -52,21 +55,20 @@ def get_live_domain_info(raw_domain):
             a_answers = resolver.resolve(raw_domain, 'A')
             data['qty_ip_resolved'] = len(a_answers)
             data['ttl_hostname'] = getattr(a_answers, 'ttl', 300)
-        except Exception:
+        except BaseException:
             data['qty_ip_resolved'] = 0
 
         try:
             mx_answers = resolver.resolve(clean_domain, 'MX')
             data['qty_mx_servers'] = len(mx_answers)
-        except Exception:
+        except BaseException:
             data['qty_mx_servers'] = 0
-    except Exception:
+    except BaseException:
         pass
 
-    # 2. Crash-Proof WHOIS Check (0.5s Timeout)
+    # 2. Non-blocking WHOIS Check (Catches socket resets, timeouts & registry blocks)
     try:
         import whois
-        socket.setdefaulttimeout(0.5)
         w = whois.whois(clean_domain)
         
         if w:
@@ -87,8 +89,8 @@ def get_live_domain_info(raw_domain):
             ns = getattr(w, 'name_servers', None)
             if ns:
                 data['qty_nameservers'] = len(ns) if isinstance(ns, list) else 1
-    except Exception:
-        # Silently fall back to default values on NXDOMAIN, rate-limit, socket error, or timeout
+    except BaseException:
+        # Silently fall back to default dictionary values on network failures
         pass
 
     return data
@@ -217,11 +219,11 @@ if __name__ == '__main__':
     if registered_domain in EXACT_LEGITIMATE_DOMAINS and ext.suffix and not ext.subdomain:
         label = "LEGITIMATE"
         prob = [100.0, 0.0]
-    # Rule 2: Invalid TLDs (e.g. google.com.a)
+    # Rule 2: Invalid TLDs (e.g., google.com.a)
     elif not bool(ext.suffix):
         label = "PHISHING"
         prob = [0.0, 100.0]
-    # Rule 3: Typo-squatted domains containing brand names (e.g. esewadkg.com.np)
+    # Rule 3: Typo-squatted domains containing brand names (e.g., esewadkg.com.np)
     elif any(b in ext.domain.lower() for b in ['esewa', 'khalti', 'paypal']) and registered_domain not in EXACT_LEGITIMATE_DOMAINS:
         label = "PHISHING"
         prob = [0.0, 100.0]

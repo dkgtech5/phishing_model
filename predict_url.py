@@ -17,8 +17,16 @@ EXACT_LEGITIMATE_DOMAINS = {
     'google.com', 'esewa.com.np', 'khalti.com', 
     'github.com', 'amazon.com', 'facebook.com', 
     'paypal.com', 'microsoft.com', 'apple.com',
-    'flipkart.com', 'wikipedia.org', 'stackoverflow.com'
+    'flipkart.com', 'wikipedia.org', 'stackoverflow.com',
+    'ncit.edu.np'
 }
+
+def normalize_url(url):
+    """Ensures input always has a scheme for safe parsing."""
+    url = url.strip()
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    return url
 
 def get_clean_domain(domain_str):
     domain_str = domain_str.split(':')[0]
@@ -30,7 +38,7 @@ def get_clean_domain(domain_str):
 def get_live_domain_info(raw_domain):
     clean_domain = get_clean_domain(raw_domain)
     
-    # Safe defaults prevent model penalties on lookup timeouts, blocks, or failures
+    # Defaults prevent model penalties on lookup timeouts, blocks, or failures
     data = {
         'time_domain_activation': 3650,  # 10 years default fallback
         'time_domain_expiration': 365,
@@ -41,10 +49,10 @@ def get_live_domain_info(raw_domain):
         'domain_spf': 1
     }
 
-    # Set hard timeout on socket operations globally for thread execution
+    # Global hard timeout for sockets
     socket.setdefaulttimeout(0.5)
 
-    # 1. Non-blocking DNS Check (0.5s Timeout)
+    # 1. Non-blocking DNS Check
     try:
         import dns.resolver
         resolver = dns.resolver.Resolver()
@@ -66,7 +74,7 @@ def get_live_domain_info(raw_domain):
     except BaseException:
         pass
 
-    # 2. Non-blocking WHOIS Check (Catches socket resets, timeouts & registry blocks)
+    # 2. Crash-Proof WHOIS Check
     try:
         import whois
         w = whois.whois(clean_domain)
@@ -90,16 +98,16 @@ def get_live_domain_info(raw_domain):
             if ns:
                 data['qty_nameservers'] = len(ns) if isinstance(ns, list) else 1
     except BaseException:
-        # Silently fall back to default dictionary values on network failures
         pass
 
     return data
 
 def extract_features(url):
+    url = normalize_url(url)
     ext = tldextract.extract(url)
     registered_domain = f"{ext.domain}.{ext.suffix}".lower() if ext.suffix else ext.domain.lower()
     
-    parsed = urlparse(url if url.startswith(('http://', 'https://')) else 'http://' + url)
+    parsed = urlparse(url)
     netloc = parsed.netloc or parsed.path.split('/')[0]
     domain = netloc.split(':')[0].lower()
     path = parsed.path if parsed.netloc else ''
@@ -192,9 +200,12 @@ def extract_features(url):
     feats['params_length'] = len(params)
     feats['qty_params'] = len(params.split('&')) if params else 0
 
-    # Network-safe domain data retrieval
-    live_data = get_live_domain_info(domain)
-    feats.update(live_data)
+    # Safe network domain fetch
+    try:
+        live_data = get_live_domain_info(domain)
+        feats.update(live_data)
+    except BaseException:
+        pass
 
     feats['tls_ssl_certificate'] = 1 if url.startswith('https') else 0
     feats['url_shortened'] = 1 if len(domain) < 10 and any(s in domain for s in ['bit.ly', 'goo.gl', 't.co', 'tinyurl']) else 0
@@ -211,23 +222,19 @@ if __name__ == '__main__':
         print("Usage: python predict_url.py <URL>")
         sys.exit(1)
 
-    url_input = sys.argv[1]
+    url_input = normalize_url(sys.argv[1])
     ext = tldextract.extract(url_input)
     registered_domain = f"{ext.domain}.{ext.suffix}".lower() if ext.suffix else ext.domain.lower()
 
-    # Rule 1: Exact matches for top legitimate websites
     if registered_domain in EXACT_LEGITIMATE_DOMAINS and ext.suffix and not ext.subdomain:
         label = "LEGITIMATE"
         prob = [100.0, 0.0]
-    # Rule 2: Invalid TLDs (e.g., google.com.a)
     elif not bool(ext.suffix):
         label = "PHISHING"
         prob = [0.0, 100.0]
-    # Rule 3: Typo-squatted domains containing brand names (e.g., esewadkg.com.np)
     elif any(b in ext.domain.lower() for b in ['esewa', 'khalti', 'paypal']) and registered_domain not in EXACT_LEGITIMATE_DOMAINS:
         label = "PHISHING"
         prob = [0.0, 100.0]
-    # Default: Pass through machine learning pipeline
     else:
         df_features = extract_features(url_input)
         pred = model.predict(df_features)[0]

@@ -3,8 +3,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 import tldextract
 
-# Import model and feature extraction engine from predict_url.py
-from predict_url import extract_features, model, EXACT_LEGITIMATE_DOMAINS
+from predict_url import extract_features, model, EXACT_LEGITIMATE_DOMAINS, normalize_url
 
 app = FastAPI(title="SafeGuard AI API")
 
@@ -17,10 +16,13 @@ def home():
 
 @app.post("/predict")
 async def predict_phishing(request: URLRequest):
-    url = request.url.strip()
-    if not url:
+    raw_input = request.url.strip()
+    if not raw_input:
         raise HTTPException(status_code=400, detail="URL cannot be empty")
     
+    # Ensure scheme is present before parsing
+    url = normalize_url(raw_input)
+
     try:
         ext = tldextract.extract(url)
         registered_domain = f"{ext.domain}.{ext.suffix}".lower() if ext.suffix else ext.domain.lower()
@@ -41,7 +43,7 @@ async def predict_phishing(request: URLRequest):
                 }
             }
 
-        # Rule 2: Invalid Top-Level Domain (e.g., google.com.a)
+        # Rule 2: Invalid Top-Level Domain
         if not bool(ext.suffix):
             return {
                 "url": url,
@@ -57,7 +59,7 @@ async def predict_phishing(request: URLRequest):
                 }
             }
 
-        # Rule 3: Brand spoofing / typo-squatting (e.g., esewadkg.com.np)
+        # Rule 3: Brand spoofing / typo-squatting
         if any(b in ext.domain.lower() for b in ['esewa', 'khalti', 'paypal']) and registered_domain not in EXACT_LEGITIMATE_DOMAINS:
             return {
                 "url": url,
@@ -97,9 +99,9 @@ async def predict_phishing(request: URLRequest):
         }
 
     except Exception as e:
-        print(f"[API Warning] Feature extraction fallback triggered for {url}: {str(e)}")
+        print(f"[API Fallback] Triggered for {url}: {str(e)}")
         
-        # Heuristic fallback to prevent 500 errors during heavy concurrency or socket blocks
+        # Absolute safety net: Return heuristic classification instead of 500 error
         is_https = url.startswith("https://")
         has_at_symbol = "@" in url
         has_suspicious_symbols = url.count('-') >= 3 or url.count('.') >= 4

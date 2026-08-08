@@ -5,12 +5,10 @@ import socket
 import joblib
 import pandas as pd
 import numpy as np
-import whois
-import dns.resolver
 import tldextract
 from urllib.parse import urlparse
 
-# Load trained pipeline and features
+# Load trained pipeline and feature ordering
 model = joblib.load('mlp_phishing_pipeline.pkl')
 feature_names = joblib.load('feature_names.pkl')
 
@@ -18,7 +16,8 @@ feature_names = joblib.load('feature_names.pkl')
 EXACT_LEGITIMATE_DOMAINS = {
     'google.com', 'esewa.com.np', 'khalti.com', 
     'github.com', 'amazon.com', 'facebook.com', 
-    'paypal.com', 'microsoft.com', 'apple.com'
+    'paypal.com', 'microsoft.com', 'apple.com',
+    'flipkart.com', 'wikipedia.org', 'stackoverflow.com'
 }
 
 def get_clean_domain(domain_str):
@@ -31,9 +30,9 @@ def get_clean_domain(domain_str):
 def get_live_domain_info(raw_domain):
     clean_domain = get_clean_domain(raw_domain)
     
-    # Default fallback values (Prevents model penalty on WHOIS timeout/block)
+    # Defaults prevent model penalties on lookup timeouts/failures
     data = {
-        'time_domain_activation': 3650, # 10 years default
+        'time_domain_activation': 3650,  # 10 years default
         'time_domain_expiration': 365,
         'qty_nameservers': 2,
         'qty_mx_servers': 1,
@@ -42,47 +41,54 @@ def get_live_domain_info(raw_domain):
         'domain_spf': 1
     }
 
-    # 1. Fast DNS Resolution
-    resolver = dns.resolver.Resolver()
-    resolver.lifetime = 1.0
-    resolver.timeout = 1.0
-
+    # 1. Isolated Fast DNS Resolution (0.5s Timeout)
     try:
-        a_answers = resolver.resolve(raw_domain, 'A')
-        data['qty_ip_resolved'] = len(a_answers)
-        data['ttl_hostname'] = a_answers.ttl
+        import dns.resolver
+        resolver = dns.resolver.Resolver()
+        resolver.lifetime = 0.5
+        resolver.timeout = 0.5
+
+        try:
+            a_answers = resolver.resolve(raw_domain, 'A')
+            data['qty_ip_resolved'] = len(a_answers)
+            data['ttl_hostname'] = getattr(a_answers, 'ttl', 300)
+        except Exception:
+            data['qty_ip_resolved'] = 0
+
+        try:
+            mx_answers = resolver.resolve(clean_domain, 'MX')
+            data['qty_mx_servers'] = len(mx_answers)
+        except Exception:
+            data['qty_mx_servers'] = 0
     except Exception:
-        data['qty_ip_resolved'] = 0
+        pass
 
+    # 2. Bulletproof WHOIS Lookup (0.5s Timeout)
     try:
-        mx_answers = resolver.resolve(clean_domain, 'MX')
-        data['qty_mx_servers'] = len(mx_answers)
-    except Exception:
-        data['qty_mx_servers'] = 0
-
-    # 2. Crash-Proof WHOIS Lookup
-    socket.setdefaulttimeout(1.0)  # Prevent blocking threadpool sockets
-    try:
+        import whois
+        socket.setdefaulttimeout(0.5)
         w = whois.whois(clean_domain)
         
-        creation_date = w.creation_date
-        if isinstance(creation_date, list) and creation_date:
-            creation_date = creation_date[0]
-            
-        expiration_date = w.expiration_date
-        if isinstance(expiration_date, list) and expiration_date:
-            expiration_date = expiration_date[0]
+        if w:
+            creation_date = getattr(w, 'creation_date', None)
+            if isinstance(creation_date, list) and creation_date:
+                creation_date = creation_date[0]
+                
+            expiration_date = getattr(w, 'expiration_date', None)
+            if isinstance(expiration_date, list) and expiration_date:
+                expiration_date = expiration_date[0]
 
-        if isinstance(creation_date, datetime.datetime):
-            data['time_domain_activation'] = max((datetime.datetime.now() - creation_date).days, 0)
+            if isinstance(creation_date, datetime.datetime):
+                data['time_domain_activation'] = max((datetime.datetime.now() - creation_date).days, 0)
 
-        if isinstance(expiration_date, datetime.datetime):
-            data['time_domain_expiration'] = max((expiration_date - datetime.datetime.now()).days, 0)
+            if isinstance(expiration_date, datetime.datetime):
+                data['time_domain_expiration'] = max((expiration_date - datetime.datetime.now()).days, 0)
 
-        if w.name_servers:
-            data['qty_nameservers'] = len(w.name_servers) if isinstance(w.name_servers, list) else 1
+            ns = getattr(w, 'name_servers', None)
+            if ns:
+                data['qty_nameservers'] = len(ns) if isinstance(ns, list) else 1
     except Exception:
-        # Silently fall back to default dict on rate-limit, timeout, or lookup error
+        # Silently fall back to defaults on rate-limit, socket error, or timeout
         pass
 
     return data
@@ -184,7 +190,7 @@ def extract_features(url):
     feats['params_length'] = len(params)
     feats['qty_params'] = len(params.split('&')) if params else 0
 
-    # Live domain details (network safe)
+    # Network-safe domain data retrieval
     live_data = get_live_domain_info(domain)
     feats.update(live_data)
 
@@ -211,11 +217,11 @@ if __name__ == '__main__':
     if registered_domain in EXACT_LEGITIMATE_DOMAINS and ext.suffix and not ext.subdomain:
         label = "LEGITIMATE"
         prob = [100.0, 0.0]
-    # Rule 2: Invalid TLDs (e.g. google.com.a)
+    # Rule 2: Invalid TLDs (e.g., google.com.a)
     elif not bool(ext.suffix):
         label = "PHISHING"
         prob = [0.0, 100.0]
-    # Rule 3: Typo-squatted domains containing brand names (e.g. esewadkg.com.np)
+    # Rule 3: Typo-squatted domains containing brand names (e.g., esewadkg.com.np)
     elif any(b in ext.domain.lower() for b in ['esewa', 'khalti', 'paypal']) and registered_domain not in EXACT_LEGITIMATE_DOMAINS:
         label = "PHISHING"
         prob = [0.0, 100.0]

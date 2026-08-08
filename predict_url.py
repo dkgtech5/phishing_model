@@ -8,7 +8,7 @@ import numpy as np
 import tldextract
 from urllib.parse import urlparse
 
-# Load trained pipeline and feature ordering
+# Load trained pipeline and feature names
 model = joblib.load('mlp_phishing_pipeline.pkl')
 feature_names = joblib.load('feature_names.pkl')
 
@@ -41,7 +41,7 @@ def get_live_domain_info(raw_domain):
         'domain_spf': 1
     }
 
-    # 1. Isolated Fast DNS Resolution (0.5s Timeout)
+    # 1. Fast DNS Check with strict exception handling (0.5s Timeout)
     try:
         import dns.resolver
         resolver = dns.resolver.Resolver()
@@ -63,7 +63,7 @@ def get_live_domain_info(raw_domain):
     except Exception:
         pass
 
-    # 2. Bulletproof WHOIS Lookup (0.5s Timeout)
+    # 2. Crash-Proof WHOIS Check (0.5s Timeout)
     try:
         import whois
         socket.setdefaulttimeout(0.5)
@@ -88,7 +88,7 @@ def get_live_domain_info(raw_domain):
             if ns:
                 data['qty_nameservers'] = len(ns) if isinstance(ns, list) else 1
     except Exception:
-        # Silently fall back to defaults on rate-limit, socket error, or timeout
+        # Silently fall back to default values on NXDOMAIN, rate-limit, socket error, or timeout
         pass
 
     return data
@@ -217,11 +217,11 @@ if __name__ == '__main__':
     if registered_domain in EXACT_LEGITIMATE_DOMAINS and ext.suffix and not ext.subdomain:
         label = "LEGITIMATE"
         prob = [100.0, 0.0]
-    # Rule 2: Invalid TLDs (e.g., google.com.a)
+    # Rule 2: Invalid TLDs (e.g. google.com.a)
     elif not bool(ext.suffix):
         label = "PHISHING"
         prob = [0.0, 100.0]
-    # Rule 3: Typo-squatted domains containing brand names (e.g., esewadkg.com.np)
+    # Rule 3: Typo-squatted domains containing brand names (e.g. esewadkg.com.np)
     elif any(b in ext.domain.lower() for b in ['esewa', 'khalti', 'paypal']) and registered_domain not in EXACT_LEGITIMATE_DOMAINS:
         label = "PHISHING"
         prob = [0.0, 100.0]

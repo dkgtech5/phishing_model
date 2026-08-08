@@ -99,7 +99,7 @@ async def predict_phishing(request: URLRequest):
     except Exception as e:
         print(f"[API Warning] Feature extraction fallback triggered for {url}: {str(e)}")
         
-        # Heuristic fallback to prevent 500 errors during heavy concurrency/socket blocks
+        # Heuristic fallback to prevent 500 errors during heavy concurrency or socket blocks
         is_https = url.startswith("https://")
         has_at_symbol = "@" in url
         has_suspicious_symbols = url.count('-') >= 3 or url.count('.') >= 4

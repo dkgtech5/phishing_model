@@ -18,7 +18,7 @@ EXACT_LEGITIMATE_DOMAINS = {
     'github.com', 'amazon.com', 'facebook.com', 
     'paypal.com', 'microsoft.com', 'apple.com',
     'flipkart.com', 'wikipedia.org', 'stackoverflow.com',
-    'ncit.edu.np'
+    'ncit.edu.np', 'daraz.com.np', 'daraz.com'
 }
 
 def normalize_url(url):
@@ -38,7 +38,7 @@ def get_clean_domain(domain_str):
 def get_live_domain_info(raw_domain):
     clean_domain = get_clean_domain(raw_domain)
     
-    # Defaults prevent model penalties on lookup timeouts, blocks, or failures
+    # Safe fallback defaults
     data = {
         'time_domain_activation': 3650,  # 10 years default fallback
         'time_domain_expiration': 365,
@@ -49,32 +49,32 @@ def get_live_domain_info(raw_domain):
         'domain_spf': 1
     }
 
-    # Set tight socket timeout
-    socket.setdefaulttimeout(1.0)
+    # Strict socket timeout to prevent worker hangs
+    socket.setdefaulttimeout(0.3)
 
-    # 1. Non-blocking DNS Check (Catches all DNS exceptions)
+    # 1. Non-blocking DNS Check (Catches ALL socket and DNS exceptions)
     try:
         import dns.resolver
         resolver = dns.resolver.Resolver()
-        resolver.lifetime = 1.0
-        resolver.timeout = 1.0
+        resolver.lifetime = 0.3
+        resolver.timeout = 0.3
 
         try:
             a_answers = resolver.resolve(raw_domain, 'A')
             data['qty_ip_resolved'] = len(a_answers)
             data['ttl_hostname'] = getattr(a_answers, 'ttl', 300)
-        except Exception:
+        except BaseException:
             data['qty_ip_resolved'] = 0
 
         try:
             mx_answers = resolver.resolve(clean_domain, 'MX')
             data['qty_mx_servers'] = len(mx_answers)
-        except Exception:
+        except BaseException:
             data['qty_mx_servers'] = 0
-    except Exception:
+    except BaseException:
         pass
 
-    # 2. Non-blocking WHOIS Check (Catches PywhoisError, UnknownTld, & socket errors)
+    # 2. Non-blocking WHOIS Check (Catches PywhoisError, parser crashes, & socket resets)
     try:
         import whois
         w = whois.whois(clean_domain)
@@ -97,8 +97,8 @@ def get_live_domain_info(raw_domain):
             ns = getattr(w, 'name_servers', None)
             if ns:
                 data['qty_nameservers'] = len(ns) if isinstance(ns, list) else 1
-    except Exception:
-        # Quietly fall back to default dict on lookup failure
+    except BaseException:
+        # Quietly fall back to default values if WHOIS lookup fails or times out
         pass
 
     return data
@@ -203,11 +203,11 @@ def extract_features(url):
         feats['params_length'] = len(params)
         feats['qty_params'] = len(params.split('&')) if params else 0
 
-        # Fetch live domain network info safely
+        # Safe Live Network Lookup
         try:
             live_data = get_live_domain_info(domain)
             feats.update(live_data)
-        except Exception:
+        except BaseException:
             pass
 
         feats['tls_ssl_certificate'] = 1 if url.startswith('https') else 0
@@ -220,8 +220,8 @@ def extract_features(url):
         row = {f: feats.get(f, -1) for f in feature_names}
         return pd.DataFrame([row])
 
-    except Exception:
-        # Safety fallback ensures dataframe creation never fails
+    except BaseException:
+        # Emergency fallback dataframe guarantees the process never crashes
         row = {f: -1 for f in feature_names}
         row['length_url'] = len(url)
         return pd.DataFrame([row])
@@ -241,7 +241,7 @@ if __name__ == '__main__':
     elif not bool(ext.suffix):
         label = "PHISHING"
         prob = [0.0, 100.0]
-    elif any(b in ext.domain.lower() for b in ['esewa', 'khalti', 'paypal']) and registered_domain not in EXACT_LEGITIMATE_DOMAINS:
+    elif any(b in ext.domain.lower() for b in ['esewa', 'khalti', 'paypal', 'daraz']) and registered_domain not in EXACT_LEGITIMATE_DOMAINS:
         label = "PHISHING"
         prob = [0.0, 100.0]
     else:

@@ -59,7 +59,7 @@ async def predict_phishing(request: URLRequest):
             }
 
         # Rule 3: Brand spoofing / typo-squatting
-        if any(b in ext.domain.lower() for b in ['esewa', 'khalti', 'paypal']) and registered_domain not in EXACT_LEGITIMATE_DOMAINS:
+        if any(b in ext.domain.lower() for b in ['esewa', 'khalti', 'paypal', 'daraz']) and registered_domain not in EXACT_LEGITIMATE_DOMAINS:
             return {
                 "url": url,
                 "status": "PHISHING",
@@ -97,8 +97,8 @@ async def predict_phishing(request: URLRequest):
             }
         }
 
-    except Exception as e:
-        print(f"[API Fallback] Triggered for {url}: {str(e)}")
+    except BaseException as e:
+        print(f"[API Fallback Triggered] {url}: {str(e)}")
         
         is_https = url.startswith("https://")
         has_at_symbol = "@" in url

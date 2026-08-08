@@ -1,0 +1,16 @@
+{
+    "model": "MLPClassifier",
+    "task": "Phishing Website Detection",
+    "classes": {
+        "0": "Legitimate",
+        "1": "Phishing"
+    },
+    "number_of_features": 111,
+    "pca_variance": 0.95,
+    "preprocessing": [
+        "StandardScaler",
+        "PCA"
+    ],
+    "early_stopping": true,
+    "random_state": 42
+}
